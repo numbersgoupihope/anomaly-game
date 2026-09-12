@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-
-const IDLE_SKIP_MS = 2600;
+import { useState } from "react";
 
 export default function LiveReplyComposer({
   turnsUsed,
@@ -18,27 +16,11 @@ export default function LiveReplyComposer({
   onSkip: () => void;
 }) {
   const [text, setText] = useState("");
-  const engagedRef = useRef(false);
-  const onSkipRef = useRef(onSkip);
-
-  useEffect(() => {
-    onSkipRef.current = onSkip;
-  });
-
-  // If the player never engages at all, move on quietly — same as before.
-  useEffect(() => {
-    if (turnsUsed > 0) return;
-    const t = setTimeout(() => {
-      if (!engagedRef.current) onSkipRef.current();
-    }, IDLE_SKIP_MS);
-    return () => clearTimeout(t);
-  }, [turnsUsed]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
-    engagedRef.current = true;
     setText("");
     onSend(trimmed);
   }
@@ -68,18 +50,13 @@ export default function LiveReplyComposer({
             </button>
           </form>
         )}
-        {turnsUsed > 0 && (
-          <button
-            onClick={() => {
-              engagedRef.current = true;
-              onSkip();
-            }}
-            disabled={disabled}
-            className="text-xs text-zinc-600 hover:text-zinc-400"
-          >
-            {reachedCap ? "continue →" : "skip →"}
-          </button>
-        )}
+        <button
+          onClick={onSkip}
+          disabled={disabled}
+          className="text-xs text-zinc-600 hover:text-zinc-400"
+        >
+          {reachedCap ? "continue →" : "skip →"}
+        </button>
       </div>
     </div>
   );

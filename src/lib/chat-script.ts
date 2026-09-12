@@ -176,11 +176,6 @@ export const CHOICE_OPTIONS: { path: Path; label: string }[] = [
   },
 ];
 
-export const CORRECT_IDS: Record<Path, string[]> = {
-  aware: ["m10"],
-  compliant: ["m10", "c3"],
-};
-
 export type ResolvedItem =
   | {
       kind: "message";
@@ -190,4 +185,5 @@ export type ResolvedItem =
       from: "mom" | "you";
       live?: boolean;
     }
-  | { kind: "image"; id: string; time: string; content: ImageContent; from: "mom" };
+  | { kind: "image"; id: string; time: string; content: ImageContent; from: "mom" }
+  | { kind: "attachment"; id: string; time: string; from: "mom" };

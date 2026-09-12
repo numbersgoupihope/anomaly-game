@@ -4,10 +4,18 @@ import { useState } from "react";
 import { getAudioEngine } from "@/lib/audio";
 
 const CAPTION = "mm— ...outside... it's not—... okay";
-const PLAY_MS = 3300;
+const PLAY_MS = 3450;
 
-export default function CorruptedAttachment({ onPlayed }: { onPlayed: () => void }) {
-  const [state, setState] = useState<"idle" | "playing" | "played">("idle");
+export default function CorruptedAttachment({
+  onPlayed,
+  initialPlayed,
+}: {
+  onPlayed: () => void;
+  initialPlayed?: boolean;
+}) {
+  const [state, setState] = useState<"idle" | "playing" | "played">(
+    initialPlayed ? "played" : "idle"
+  );
 
   function handlePlay() {
     if (state !== "idle") return;

@@ -135,50 +135,72 @@ class AudioEngine {
     osc.stop(ctx.currentTime + 0.5);
   }
 
-  /** A warped, stuttering, garbled tone for the corrupted voice memo. */
+  /** A warped, stuttering, garbled tone for the corrupted voice memo —
+   * deep pitch distortion, panning across as if approaching, rising
+   * volume, then an abrupt hard cutoff (no fade-out). */
   playCorruptedVoice() {
     const ctx = this.ensureContext();
-    const duration = 3.2;
+    const duration = 3.4;
     const now = ctx.currentTime;
+    const end = now + duration;
 
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    gain.connect(this.masterGain!);
+    // Pans from one side toward center as it "approaches".
+    const panner = ctx.createStereoPanner();
+    panner.pan.setValueAtTime(-0.85, now);
+    panner.pan.linearRampToValueAtTime(0.15, end);
+    panner.connect(this.masterGain!);
+
+    const envelope = ctx.createGain();
+    envelope.gain.setValueAtTime(0, now);
+    envelope.connect(panner);
+
+    // Opens up slightly as it approaches, like clearing through a bad signal.
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(600, now);
+    filter.frequency.linearRampToValueAtTime(2200, end);
+    filter.connect(envelope);
 
     const shaper = ctx.createWaveShaper();
-    shaper.curve = distortionCurve(40) as Float32Array<ArrayBuffer>;
-    shaper.connect(gain);
+    shaper.curve = distortionCurve(55) as Float32Array<ArrayBuffer>;
+    shaper.connect(filter);
 
     const osc = ctx.createOscillator();
     osc.type = "sawtooth";
-    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.setValueAtTime(120, now);
     osc.connect(shaper);
 
-    // Pitch wobble — warped-tape vibrato.
+    // Pitch wobble — warped-tape vibrato, deepening as it goes.
     const wobble = ctx.createOscillator();
-    wobble.frequency.value = 5.5;
+    wobble.frequency.value = 4.5;
     const wobbleGain = ctx.createGain();
-    wobbleGain.gain.value = 35;
+    wobbleGain.gain.setValueAtTime(30, now);
+    wobbleGain.gain.linearRampToValueAtTime(60, end);
     wobble.connect(wobbleGain);
     wobbleGain.connect(osc.frequency);
 
-    // Granular stutter — chops the tone into garbled syllable-like bursts.
-    gain.gain.setValueAtTime(0, now);
+    // Granular stutter — chops the tone into garbled syllable-like bursts,
+    // each one louder than the last.
     let t = now;
-    while (t < now + duration) {
+    while (t < end) {
+      const progress = (t - now) / duration;
       const burst = 0.08 + Math.random() * 0.14;
       const gap = 0.03 + Math.random() * 0.09;
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.16, t + 0.01);
-      gain.gain.setValueAtTime(0.16, t + burst);
-      gain.gain.linearRampToValueAtTime(0, t + burst + 0.02);
+      const peak = 0.1 + 0.24 * progress;
+      envelope.gain.setValueAtTime(0, t);
+      envelope.gain.linearRampToValueAtTime(peak, t + 0.01);
+      envelope.gain.setValueAtTime(peak, t + burst);
+      envelope.gain.linearRampToValueAtTime(0, t + burst + 0.02);
       t += burst + gap;
     }
+    // Hard cutoff — it doesn't fade, it just stops.
+    envelope.gain.cancelScheduledValues(end);
+    envelope.gain.setValueAtTime(0, end);
 
     osc.start(now);
-    osc.stop(now + duration + 0.1);
+    osc.stop(end + 0.05);
     wobble.start(now);
-    wobble.stop(now + duration + 0.1);
+    wobble.stop(end + 0.05);
   }
 }
 

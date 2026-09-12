@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DailyResult, GuessResponse, SceneForClient } from "@/lib/types";
-import { getAnonId, getCachedResult, setCachedResult } from "@/lib/storage";
+import { getCachedResult, setCachedResult } from "@/lib/storage";
 import { buildShareText } from "@/lib/share";
 import { framingLineForDay } from "@/lib/framing";
 import { getAudioEngine } from "@/lib/audio";
@@ -36,14 +36,11 @@ export default function Game() {
   const [copied, setCopied] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const anonIdRef = useRef<string>("");
   const startedAtRef = useRef<number>(0);
   const submittedRef = useRef(false);
   const pendingResultRef = useRef<DailyResult | null>(null);
 
   useEffect(() => {
-    anonIdRef.current = getAnonId();
-
     fetch("/api/scene", { cache: "no-store" })
       .then(async (res) => {
         if (!res.ok) throw new Error("No scene available today.");
@@ -107,10 +104,7 @@ export default function Game() {
         const res = await fetch("/api/guess", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            anonId: anonIdRef.current,
-            sentenceIndex,
-          }),
+          body: JSON.stringify({ sentenceIndex }),
         });
         if (!res.ok) throw new Error("Couldn't submit your guess.");
         const data: GuessResponse = await res.json();
@@ -123,7 +117,6 @@ export default function Game() {
           anomalyIndex: data.anomalyIndex,
           revealText: data.revealText,
           timeTakenSeconds,
-          streakAfter: data.currentStreak,
         };
 
         setCachedResult(dailyResult);
@@ -245,10 +238,9 @@ export default function Game() {
           </p>
         </div>
 
-        <div className="flex items-center justify-between text-sm text-zinc-400">
-          <span>streak: {result.streakAfter}</span>
-          {result.correct && <span>{result.timeTakenSeconds}s</span>}
-        </div>
+        {result.correct && (
+          <p className="text-sm text-zinc-400">{result.timeTakenSeconds}s</p>
+        )}
 
         <button
           onClick={handleCopy}

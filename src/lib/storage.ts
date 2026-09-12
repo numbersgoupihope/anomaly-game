@@ -1,16 +1,5 @@
 import type { DailyResult } from "./types";
 
-const ANON_ID_KEY = "anomaly_anon_id";
-
-export function getAnonId(): string {
-  let id = window.localStorage.getItem(ANON_ID_KEY);
-  if (!id) {
-    id = crypto.randomUUID();
-    window.localStorage.setItem(ANON_ID_KEY, id);
-  }
-  return id;
-}
-
 function resultKey(playDate: string) {
   return `anomaly_result_${playDate}`;
 }

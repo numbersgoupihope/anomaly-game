@@ -16,15 +16,22 @@ export type RedditContent = {
 
 export type ImageContent = CraigslistContent | RedditContent;
 
+import type { BeatId } from "@/lib/mom-ai";
+
 export type MessageStep = { kind: "message"; id: string; time: string; text: string };
 export type ImageStep = { kind: "image"; id: string; time: string; content: ImageContent };
-export type ReplyStep = { kind: "reply"; id: string };
+// A live back-and-forth with the Mom AI, scoped to one story beat.
+export type ReplyStep = { kind: "reply"; id: string; beatId: BeatId };
 export type ChoiceStep = { kind: "choice"; id: string };
 // The "are you still there" pause: the typing indicator starts/stops a few
 // times before this message finally lands.
 export type FlickerStep = { kind: "flicker"; id: string; time: string; text: string };
 // A typing indicator that appears and never resolves into a message.
 export type FrozenStep = { kind: "frozen"; id: string };
+// A "voice memo" attachment that plays back warped/garbled audio.
+export type CorruptedAttachmentStep = { kind: "corrupted-attachment"; id: string; time: string };
+// A one-off line referencing the player's real session — never explained.
+export type FourthWallStep = { kind: "fourth-wall"; id: string };
 
 export type ScriptStep =
   | MessageStep
@@ -32,7 +39,9 @@ export type ScriptStep =
   | ReplyStep
   | ChoiceStep
   | FlickerStep
-  | FrozenStep;
+  | FrozenStep
+  | CorruptedAttachmentStep
+  | FourthWallStep;
 
 export type Path = "aware" | "compliant";
 
@@ -44,7 +53,7 @@ export const INTRO_STEPS: ScriptStep[] = [
     time: "9:41 PM",
     text: "don't answer if you're asleep, it's not important",
   },
-  { kind: "reply", id: "r1" },
+  { kind: "reply", id: "r1", beatId: "opener" },
   { kind: "message", id: "m3", time: "9:43 PM", text: "ok good" },
   { kind: "message", id: "m4", time: "9:43 PM", text: "this is going to sound strange" },
   {
@@ -59,7 +68,7 @@ export const INTRO_STEPS: ScriptStep[] = [
     time: "9:44 PM",
     text: "missed connections, I think it's called",
   },
-  { kind: "reply", id: "r2" },
+  { kind: "reply", id: "r2", beatId: "craigslist-setup" },
   { kind: "message", id: "m7", time: "9:46 PM", text: "ok. good. that's good." },
   {
     kind: "message",
@@ -85,7 +94,7 @@ export const INTRO_STEPS: ScriptStep[] = [
     time: "9:48 PM",
     text: "I don't understand how someone knew your name three years ago, you weren't even living here yet",
   },
-  { kind: "reply", id: "r3" },
+  { kind: "reply", id: "r3", beatId: "impossible-timing" },
   { kind: "message", id: "m11", time: "9:51 PM", text: "ok well. probably a coincidence." },
   {
     kind: "message",
@@ -120,6 +129,8 @@ export const INTRO_STEPS: ScriptStep[] = [
     time: "9:56 PM",
     text: "you dropped your umbrella outside that exact pharmacy last week. I picked it up and gave it back to you.",
   },
+  { kind: "corrupted-attachment", id: "attachment1", time: "9:57 PM" },
+  { kind: "fourth-wall", id: "fourthwall1" },
   { kind: "choice", id: "choice1" },
 ];
 
@@ -143,7 +154,7 @@ export const COMPLIANT_STEPS: ScriptStep[] = [
     text: "sorry. I stepped away and when I came back my messages to you were already marked as read. I hadn't opened this conversation again yet.",
   },
   { kind: "message", id: "c4", time: "10:04 PM", text: "did you read these already" },
-  { kind: "reply", id: "r4" },
+  { kind: "reply", id: "r4", beatId: "read-receipt" },
   { kind: "message", id: "c5", time: "10:07 PM", text: "actually — quick thing before I go" },
   {
     kind: "message",
@@ -171,5 +182,12 @@ export const CORRECT_IDS: Record<Path, string[]> = {
 };
 
 export type ResolvedItem =
-  | { kind: "message"; id: string; time: string; text: string; from: "mom" | "you" }
+  | {
+      kind: "message";
+      id: string;
+      time: string;
+      text: string;
+      from: "mom" | "you";
+      live?: boolean;
+    }
   | { kind: "image"; id: string; time: string; content: ImageContent; from: "mom" };

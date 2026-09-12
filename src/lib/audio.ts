@@ -2,7 +2,7 @@ const BASE_DETUNE_CENTS = 4;
 const MAX_DETUNE_CENTS = 45;
 const DRONE_GAIN = 0.05;
 
-function distortionCurve(amount: number) {
+function distortionCurve(amount: number): Float32Array {
   const samples = 256;
   const curve = new Float32Array(samples);
   for (let i = 0; i < samples; i++) {
@@ -133,6 +133,52 @@ class AudioEngine {
 
     osc.start();
     osc.stop(ctx.currentTime + 0.5);
+  }
+
+  /** A warped, stuttering, garbled tone for the corrupted voice memo. */
+  playCorruptedVoice() {
+    const ctx = this.ensureContext();
+    const duration = 3.2;
+    const now = ctx.currentTime;
+
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    gain.connect(this.masterGain!);
+
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = distortionCurve(40) as Float32Array<ArrayBuffer>;
+    shaper.connect(gain);
+
+    const osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(180, now);
+    osc.connect(shaper);
+
+    // Pitch wobble — warped-tape vibrato.
+    const wobble = ctx.createOscillator();
+    wobble.frequency.value = 5.5;
+    const wobbleGain = ctx.createGain();
+    wobbleGain.gain.value = 35;
+    wobble.connect(wobbleGain);
+    wobbleGain.connect(osc.frequency);
+
+    // Granular stutter — chops the tone into garbled syllable-like bursts.
+    gain.gain.setValueAtTime(0, now);
+    let t = now;
+    while (t < now + duration) {
+      const burst = 0.08 + Math.random() * 0.14;
+      const gap = 0.03 + Math.random() * 0.09;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.16, t + 0.01);
+      gain.gain.setValueAtTime(0.16, t + burst);
+      gain.gain.linearRampToValueAtTime(0, t + burst + 0.02);
+      t += burst + gap;
+    }
+
+    osc.start(now);
+    osc.stop(now + duration + 0.1);
+    wobble.start(now);
+    wobble.stop(now + duration + 0.1);
   }
 }
 

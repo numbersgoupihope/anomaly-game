@@ -48,7 +48,7 @@ export default function ReviewScreen({
               key={item.id}
               from={item.from}
               text={item.text}
-              reviewable={item.from === "mom"}
+              reviewable={item.from === "mom" && !item.live}
               selected={selected.has(item.id)}
               revealed={submitted}
               isCorrect={correctIds.includes(item.id)}

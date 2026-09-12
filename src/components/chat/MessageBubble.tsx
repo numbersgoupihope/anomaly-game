@@ -8,6 +8,7 @@ type Props = {
   revealed?: boolean;
   isCorrect?: boolean;
   onToggle?: () => void;
+  domId?: string;
 };
 
 export default function MessageBubble({
@@ -18,6 +19,7 @@ export default function MessageBubble({
   revealed,
   isCorrect,
   onToggle,
+  domId,
 }: Props) {
   const isMom = from === "mom";
 
@@ -44,7 +46,7 @@ export default function MessageBubble({
   }
 
   return (
-    <div className={`flex flex-col gap-1 ${isMom ? "items-start" : "items-end"}`}>
+    <div id={domId} className={`flex flex-col gap-1 ${isMom ? "items-start" : "items-end"}`}>
       <div
         onClick={reviewable ? onToggle : undefined}
         className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${ring} ${

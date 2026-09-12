@@ -7,8 +7,7 @@ import { buildShareText } from "@/lib/share";
 import { framingLineForDay } from "@/lib/framing";
 import { getAudioEngine } from "@/lib/audio";
 import StatsBar from "@/components/StatsBar";
-import NoiseCanvas from "@/components/NoiseCanvas";
-import SoundToggle from "@/components/SoundToggle";
+import Atmosphere from "@/components/Atmosphere";
 
 const ROUND_SECONDS = 30;
 const FRAMING_MS = 2400;
@@ -300,17 +299,7 @@ export default function Game() {
 
   return (
     <>
-      <NoiseCanvas />
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 z-10 transition-[background] duration-700 ease-out"
-        style={{
-          background: `radial-gradient(ellipse at center, transparent ${
-            42 - tension * 22
-          }%, rgba(0,0,0,${0.5 + tension * 0.4}) 100%)`,
-        }}
-      />
-      <SoundToggle />
+      <Atmosphere tension={tension} />
       {content}
     </>
   );

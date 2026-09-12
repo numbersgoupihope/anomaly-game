@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 const SIZE = 100;
 const FRAME_MS = 90;
 
-export default function NoiseCanvas() {
+export default function NoiseCanvas({ boost }: { boost?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -44,7 +44,9 @@ export default function NoiseCanvas() {
     <canvas
       ref={canvasRef}
       aria-hidden
-      className="pointer-events-none fixed inset-0 z-10 h-full w-full opacity-[0.045] mix-blend-overlay"
+      className={`pointer-events-none fixed inset-0 z-10 h-full w-full mix-blend-overlay transition-opacity duration-150 ${
+        boost ? "opacity-30" : "opacity-[0.075]"
+      }`}
     />
   );
 }

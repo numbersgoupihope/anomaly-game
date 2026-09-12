@@ -2,29 +2,45 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DailyResult, GuessResponse, SceneForClient } from "@/lib/types";
-import { getAnonId, getCachedResult, setCachedResult } from "@/lib/storage";
+import { getCachedResult, setCachedResult } from "@/lib/storage";
 import { buildShareText } from "@/lib/share";
+import { framingLineForDay } from "@/lib/framing";
+import { getAudioEngine } from "@/lib/audio";
 import StatsBar from "@/components/StatsBar";
+import NoiseCanvas from "@/components/NoiseCanvas";
+import SoundToggle from "@/components/SoundToggle";
 
 const ROUND_SECONDS = 30;
+const FRAMING_MS = 2400;
+const REVEAL_STEP_MS = 750;
+const REVEAL_SETTLE_MS = 500;
+const GLITCH_MS = 650;
 
-type Phase = "loading" | "playing" | "submitting" | "result" | "error";
+type Phase =
+  | "loading"
+  | "framing"
+  | "revealing"
+  | "playing"
+  | "submitting"
+  | "glitching"
+  | "result"
+  | "error";
 
 export default function Game() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [scene, setScene] = useState<SceneForClient | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(ROUND_SECONDS);
+  const [revealedCount, setRevealedCount] = useState(0);
   const [result, setResult] = useState<DailyResult | null>(null);
+  const [glitchIndex, setGlitchIndex] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const anonIdRef = useRef<string>("");
   const startedAtRef = useRef<number>(0);
   const submittedRef = useRef(false);
+  const pendingResultRef = useRef<DailyResult | null>(null);
 
   useEffect(() => {
-    anonIdRef.current = getAnonId();
-
     fetch("/api/scene", { cache: "no-store" })
       .then(async (res) => {
         if (!res.ok) throw new Error("No scene available today.");
@@ -38,8 +54,7 @@ export default function Game() {
           setResult(cached);
           setPhase("result");
         } else {
-          startedAtRef.current = Date.now();
-          setPhase("playing");
+          setPhase("framing");
         }
       })
       .catch((err) => {
@@ -47,6 +62,32 @@ export default function Game() {
         setPhase("error");
       });
   }, []);
+
+  // Framing line holds, then hands off to the staggered sentence reveal.
+  useEffect(() => {
+    if (phase !== "framing") return;
+    const id = setTimeout(() => {
+      setRevealedCount(0);
+      setPhase("revealing");
+    }, FRAMING_MS);
+    return () => clearTimeout(id);
+  }, [phase]);
+
+  // Sentences appear one at a time; the timer and click targets stay off until all are in.
+  useEffect(() => {
+    if (phase !== "revealing" || !scene) return;
+
+    if (revealedCount >= scene.sentences.length) {
+      const id = setTimeout(() => {
+        startedAtRef.current = Date.now();
+        setPhase("playing");
+      }, REVEAL_SETTLE_MS);
+      return () => clearTimeout(id);
+    }
+
+    const id = setTimeout(() => setRevealedCount((c) => c + 1), REVEAL_STEP_MS);
+    return () => clearTimeout(id);
+  }, [phase, revealedCount, scene]);
 
   const submitGuess = useMemo(
     () => async (sentenceIndex: number) => {
@@ -63,10 +104,7 @@ export default function Game() {
         const res = await fetch("/api/guess", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            anonId: anonIdRef.current,
-            sentenceIndex,
-          }),
+          body: JSON.stringify({ sentenceIndex }),
         });
         if (!res.ok) throw new Error("Couldn't submit your guess.");
         const data: GuessResponse = await res.json();
@@ -79,12 +117,24 @@ export default function Game() {
           anomalyIndex: data.anomalyIndex,
           revealText: data.revealText,
           timeTakenSeconds,
-          streakAfter: data.currentStreak,
         };
 
         setCachedResult(dailyResult);
-        setResult(dailyResult);
-        setPhase("result");
+
+        const audio = getAudioEngine();
+        if (audio.enabled) {
+          if (data.correct) audio.playCorrect();
+          else audio.playIncorrect();
+        }
+
+        if (data.correct) {
+          setResult(dailyResult);
+          setPhase("result");
+        } else {
+          pendingResultRef.current = dailyResult;
+          setGlitchIndex(data.anomalyIndex);
+          setPhase("glitching");
+        }
       } catch (err) {
         setErrorMessage(
           err instanceof Error ? err.message : "Something went wrong."
@@ -98,6 +148,9 @@ export default function Game() {
   useEffect(() => {
     if (phase !== "playing") return;
 
+    const audio = getAudioEngine();
+    audio.setTension((ROUND_SECONDS - secondsLeft) / ROUND_SECONDS);
+
     if (secondsLeft <= 0) {
       submitGuess(-1);
       return;
@@ -106,6 +159,16 @@ export default function Game() {
     const id = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(id);
   }, [phase, secondsLeft, submitGuess]);
+
+  // A wrong or missed guess glitches the true anomaly briefly before the calm reveal.
+  useEffect(() => {
+    if (phase !== "glitching") return;
+    const id = setTimeout(() => {
+      setResult(pendingResultRef.current);
+      setPhase("result");
+    }, GLITCH_MS);
+    return () => clearTimeout(id);
+  }, [phase]);
 
   async function handleCopy() {
     if (!result) return;
@@ -118,20 +181,40 @@ export default function Game() {
     }
   }
 
+  const tension =
+    phase === "playing" ? (ROUND_SECONDS - secondsLeft) / ROUND_SECONDS : 0;
+
+  let content: React.ReactNode;
+
   if (phase === "loading") {
-    return <p className="text-sm text-zinc-500">loading today&rsquo;s scene…</p>;
-  }
-
-  if (phase === "error") {
-    return <p className="text-sm text-red-400">{errorMessage}</p>;
-  }
-
-  if (phase === "submitting") {
-    return <p className="text-sm text-zinc-500">reading the scene again…</p>;
-  }
-
-  if (phase === "result" && result) {
-    return (
+    content = <p className="text-sm text-zinc-500">loading today&rsquo;s scene…</p>;
+  } else if (phase === "error") {
+    content = <p className="text-sm text-red-400">{errorMessage}</p>;
+  } else if (phase === "framing" && scene) {
+    content = (
+      <div className="flex min-h-[35vh] w-full max-w-lg flex-col items-center justify-center text-center">
+        <p className="anomaly-fade-in font-display text-base italic leading-relaxed text-zinc-400">
+          {framingLineForDay(scene.dayNumber)}
+        </p>
+      </div>
+    );
+  } else if (phase === "submitting") {
+    content = <p className="text-sm text-zinc-500">reading the scene again…</p>;
+  } else if (phase === "glitching" && scene && glitchIndex !== null) {
+    content = (
+      <div className="flex w-full max-w-xl flex-col gap-6">
+        <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+          Anomaly #{scene.dayNumber}
+        </p>
+        <div className="rounded border border-zinc-800 bg-zinc-950/60 p-5">
+          <p className="anomaly-glitch font-display text-sm leading-relaxed text-zinc-300">
+            {scene.sentences[glitchIndex]}
+          </p>
+        </div>
+      </div>
+    );
+  } else if (phase === "result" && result) {
+    content = (
       <div className="flex w-full max-w-xl flex-col gap-6">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
@@ -147,7 +230,7 @@ export default function Game() {
         </div>
 
         <div className="rounded border border-zinc-800 bg-zinc-950/60 p-5">
-          <p className="text-sm leading-relaxed text-zinc-300">
+          <p className="font-display text-sm leading-relaxed text-zinc-300">
             {scene?.sentences[result.anomalyIndex]}
           </p>
           <p className="mt-3 text-sm italic leading-relaxed text-zinc-500">
@@ -155,10 +238,9 @@ export default function Game() {
           </p>
         </div>
 
-        <div className="flex items-center justify-between text-sm text-zinc-400">
-          <span>streak: {result.streakAfter}</span>
-          {result.correct && <span>{result.timeTakenSeconds}s</span>}
-        </div>
+        {result.correct && (
+          <p className="text-sm text-zinc-400">{result.timeTakenSeconds}s</p>
+        )}
 
         <button
           onClick={handleCopy}
@@ -170,43 +252,66 @@ export default function Game() {
         <StatsBar />
       </div>
     );
+  } else if ((phase === "revealing" || phase === "playing") && scene) {
+    const visibleCount =
+      phase === "revealing" ? revealedCount : scene.sentences.length;
+
+    content = (
+      <div className="flex w-full max-w-xl flex-col gap-6">
+        <div className="flex items-baseline justify-between">
+          <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+            Anomaly #{scene.dayNumber}
+          </p>
+          <p
+            className={`font-mono text-sm tabular-nums ${
+              phase === "playing" && secondsLeft <= 10
+                ? "text-red-400"
+                : "text-zinc-500"
+            }`}
+          >
+            0:
+            {(phase === "playing" ? secondsLeft : ROUND_SECONDS)
+              .toString()
+              .padStart(2, "0")}
+          </p>
+        </div>
+
+        <p className="text-xs text-zinc-500">
+          one of these sentences is wrong. click it.
+        </p>
+
+        <div className="flex flex-col gap-3">
+          {scene.sentences.slice(0, visibleCount).map((sentence, i) => (
+            <button
+              key={i}
+              onClick={() => submitGuess(i)}
+              disabled={phase !== "playing"}
+              className="anomaly-fade-in rounded border border-zinc-800 bg-zinc-950/40 p-4 text-left font-display text-sm leading-relaxed text-zinc-300 transition-colors hover:border-zinc-500 hover:bg-zinc-900 hover:text-zinc-100 disabled:cursor-default"
+            >
+              {sentence}
+            </button>
+          ))}
+        </div>
+
+        <StatsBar />
+      </div>
+    );
   }
 
-  if (!scene) return null;
-
   return (
-    <div className="flex w-full max-w-xl flex-col gap-6">
-      <div className="flex items-baseline justify-between">
-        <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-          Anomaly #{scene.dayNumber}
-        </p>
-        <p
-          className={`font-mono text-sm tabular-nums ${
-            secondsLeft <= 10 ? "text-red-400" : "text-zinc-500"
-          }`}
-        >
-          0:{secondsLeft.toString().padStart(2, "0")}
-        </p>
-      </div>
-
-      <p className="text-xs text-zinc-500">
-        one of these sentences is wrong. click it.
-      </p>
-
-      <div className="flex flex-col gap-3">
-        {scene.sentences.map((sentence, i) => (
-          <button
-            key={i}
-            onClick={() => submitGuess(i)}
-            disabled={phase !== "playing"}
-            className="rounded border border-zinc-800 bg-zinc-950/40 p-4 text-left text-sm leading-relaxed text-zinc-300 transition-colors hover:border-zinc-500 hover:bg-zinc-900 hover:text-zinc-100 disabled:cursor-default"
-          >
-            {sentence}
-          </button>
-        ))}
-      </div>
-
-      <StatsBar />
-    </div>
+    <>
+      <NoiseCanvas />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-10 transition-[background] duration-700 ease-out"
+        style={{
+          background: `radial-gradient(ellipse at center, transparent ${
+            42 - tension * 22
+          }%, rgba(0,0,0,${0.5 + tension * 0.4}) 100%)`,
+        }}
+      />
+      <SoundToggle />
+      {content}
+    </>
   );
 }

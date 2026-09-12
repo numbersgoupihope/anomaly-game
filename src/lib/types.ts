@@ -9,8 +9,6 @@ export type GuessResponse = {
   correct: boolean;
   anomalyIndex: number;
   revealText: string;
-  currentStreak: number;
-  alreadyPlayed: boolean;
 };
 
 export type StatsResponse = {
@@ -27,5 +25,4 @@ export type DailyResult = {
   anomalyIndex: number;
   revealText: string;
   timeTakenSeconds: number;
-  streakAfter: number;
 };

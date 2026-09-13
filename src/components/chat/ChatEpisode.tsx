@@ -160,10 +160,30 @@ export default function ChatEpisode() {
     const stepId = step.id;
     const turn = liveTurnsByStep[stepId] ?? 0;
 
-    setResolved((r) => [
-      ...r,
-      { kind: "message", id: `you-${stepId}-${turn}`, time: "", text, from: "you" },
-    ]);
+    const youItem: ResolvedItem = {
+      kind: "message",
+      id: `you-${stepId}-${turn}`,
+      time: "",
+      text,
+      from: "you",
+    };
+    setResolved((r) => [...r, youItem]);
+
+    // The full conversation so far, for grounding — separate from the
+    // per-beat exchange sent as the actual API turns below.
+    const transcript = [...resolved, youItem].map((item) => {
+      if (item.kind === "message") return { from: item.from, text: item.text };
+      if (item.kind === "image") {
+        return {
+          from: "mom" as const,
+          text:
+            item.content.kind === "craigslist"
+              ? "[sent a screenshot of an old Craigslist ad]"
+              : "[sent a screenshot of a Reddit thread]",
+        };
+      }
+      return { from: "mom" as const, text: "[sent a voice memo]" };
+    });
 
     const history = liveHistoryRef.current[stepId] ?? [];
     history.push({ role: "user", content: text });
@@ -175,7 +195,7 @@ export default function ChatEpisode() {
       const res = await fetch("/api/chat-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ beatId: step.beatId, history }),
+        body: JSON.stringify({ beatId: step.beatId, history, transcript }),
       });
       const data = await res.json().catch(() => null);
       if (typeof data?.reply === "string" && data.reply.trim()) reply = data.reply.trim();

@@ -84,7 +84,7 @@ export const INTRO_STEPS: ScriptStep[] = [
       kind: "craigslist",
       title: "you dropped this — w4m — 24 (Riverside & 8th)",
       meta: "Posted 3 years, 7 months ago",
-      body: "You were standing outside the pharmacy on 8th, red umbrella, on the phone with someone. You dropped a receipt when you were digging for your keys. I picked it up to give it back but you'd already crossed the street. I still have it. I think about it more than I should. If this is you, I have something of yours.",
+      body: "You were standing outside the pharmacy on 8th, red umbrella, on the phone with someone. You dropped a receipt when you were digging for your keys — a pharmacy loyalty receipt with your name printed right on it: Jordan. I picked it up to give it back but you'd already crossed the street. I still have it. I think about it more than I should. If this is you, I have something of yours.",
     },
   },
   { kind: "message", id: "m9", time: "9:48 PM", text: "that's your name isn't it" },

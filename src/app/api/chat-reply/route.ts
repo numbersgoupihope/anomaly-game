@@ -5,6 +5,7 @@ import {
   MOM_AI_CONTEXTS,
   buildMomSystemPrompt,
   fallbackReply,
+  rollWrongness,
   type BeatId,
 } from "@/lib/mom-ai";
 
@@ -12,8 +13,10 @@ export const dynamic = "force-dynamic";
 
 const MAX_MESSAGE_CHARS = 300;
 const MAX_HISTORY_ITEMS = MAX_LIVE_TURNS * 2;
+const MAX_TRANSCRIPT_ITEMS = 60;
 
 type HistoryItem = { role: "user" | "assistant"; content: string };
+type TranscriptItem = { from: "mom" | "you"; text: string };
 
 function isBeatId(value: unknown): value is BeatId {
   return typeof value === "string" && value in MOM_AI_CONTEXTS;
@@ -39,10 +42,28 @@ function sanitizeHistory(raw: unknown): HistoryItem[] | null {
   return out;
 }
 
+function sanitizeTranscript(raw: unknown): TranscriptItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TranscriptItem[] = [];
+  for (const item of raw.slice(-MAX_TRANSCRIPT_ITEMS)) {
+    if (!item || (item.from !== "mom" && item.from !== "you") || typeof item.text !== "string") {
+      continue;
+    }
+    out.push({ from: item.from, text: item.text.slice(0, MAX_MESSAGE_CHARS) });
+  }
+  return out;
+}
+
+function formatTranscript(transcript: TranscriptItem[]): string {
+  if (transcript.length === 0) return "(nothing yet — this is the very first message)";
+  return transcript.map((item) => `${item.from === "mom" ? "Mom" : "Kid"}: ${item.text}`).join("\n");
+}
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const beatId = body?.beatId;
   const history = sanitizeHistory(body?.history);
+  const transcript = sanitizeTranscript(body?.transcript);
 
   if (!isBeatId(beatId) || !history) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
@@ -70,6 +91,14 @@ export async function POST(request: Request) {
   // alternate spelling before giving up to the static fallback.
   const MODEL_CANDIDATES = ["claude-haiku-4-5", "claude-haiku-4-5-20251001"];
 
+  const { includeWrongness, pattern } = rollWrongness();
+  const systemPrompt = buildMomSystemPrompt({
+    beatId,
+    transcriptSoFar: formatTranscript(transcript),
+    includeWrongness,
+    wrongnessPattern: pattern,
+  });
+
   try {
     const client = new Anthropic({ apiKey });
     let response: Anthropic.Message | null = null;
@@ -80,7 +109,7 @@ export async function POST(request: Request) {
         response = await client.messages.create({
           model,
           max_tokens: 200,
-          system: buildMomSystemPrompt(MOM_AI_CONTEXTS[beatId]),
+          system: systemPrompt,
           messages: history,
         });
         if (model !== MODEL_CANDIDATES[0]) {
@@ -106,6 +135,10 @@ export async function POST(request: Request) {
     if (!reply) {
       console.error("[chat-reply] Anthropic response had no usable text block:", response);
     }
+
+    console.log(
+      `[chat-reply] beat=${beatId} wrongness=${includeWrongness ? pattern : "none"} reply="${reply}"`
+    );
 
     return NextResponse.json({ reply: reply || fallbackReply(beatId) });
   } catch (err) {

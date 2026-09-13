@@ -45,6 +45,22 @@ export type ScriptStep =
 
 export type Path = "aware" | "compliant";
 
+// The Craigslist ad's callout is the one place the player's real name should
+// land — a specific wrong name (the old hardcoded "Jordan") reads worse than
+// no name at all, so the fallback rephrases around it instead of guessing.
+export function craigslistAdBody(name: string | null): string {
+  const nameClause = name
+    ? `a pharmacy loyalty receipt with your name printed right on it: ${name}.`
+    : "a pharmacy loyalty receipt with your name printed right on it, clear as anything.";
+  return `You were standing outside the pharmacy on 8th, red umbrella, on the phone with someone. You dropped a receipt when you were digging for your keys — ${nameClause} I picked it up to give it back but you'd already crossed the street. I still have it. I think about it more than I should. If this is you, I have something of yours.`;
+}
+
+export function nameCalloutText(name: string | null): string {
+  return name
+    ? `${name} — that's your name right there, isn't it`
+    : "that's your name right there, isn't it";
+}
+
 export const INTRO_STEPS: ScriptStep[] = [
   { kind: "message", id: "m1", time: "9:41 PM", text: "hey are you awake" },
   {
@@ -69,7 +85,6 @@ export const INTRO_STEPS: ScriptStep[] = [
     text: "missed connections, I think it's called",
   },
   { kind: "reply", id: "r2", beatId: "craigslist-setup" },
-  { kind: "message", id: "m7", time: "9:46 PM", text: "ok. good. that's good." },
   {
     kind: "message",
     id: "m8",
@@ -84,10 +99,10 @@ export const INTRO_STEPS: ScriptStep[] = [
       kind: "craigslist",
       title: "you dropped this — w4m — 24 (Riverside & 8th)",
       meta: "Posted 3 years, 7 months ago",
-      body: "You were standing outside the pharmacy on 8th, red umbrella, on the phone with someone. You dropped a receipt when you were digging for your keys — a pharmacy loyalty receipt with your name printed right on it: Jordan. I picked it up to give it back but you'd already crossed the street. I still have it. I think about it more than I should. If this is you, I have something of yours.",
+      body: craigslistAdBody(null),
     },
   },
-  { kind: "message", id: "m9", time: "9:48 PM", text: "that's your name isn't it" },
+  { kind: "message", id: "m9", time: "9:48 PM", text: nameCalloutText(null) },
   {
     kind: "message",
     id: "m10",
@@ -95,7 +110,6 @@ export const INTRO_STEPS: ScriptStep[] = [
     text: "I don't understand how someone knew your name three years ago, you weren't even living here yet",
   },
   { kind: "reply", id: "r3", beatId: "impossible-timing" },
-  { kind: "message", id: "m11", time: "9:51 PM", text: "ok well. probably a coincidence." },
   {
     kind: "message",
     id: "m12",
@@ -142,6 +156,16 @@ export const AWARE_STEPS: ScriptStep[] = [
     text: "yeah. you're probably right. I'm going to stop looking at this stuff, it's late.",
   },
   { kind: "message", id: "a2", time: "9:58 PM", text: "goodnight. love you." },
+  // A long, deliberately dead pause after the goodnight — the episode is
+  // meant to feel over here — before one last mundane-but-wrong detail
+  // arrives, hours later, with no follow-up. No jump scare, just a closing
+  // wrongness that never resolves.
+  {
+    kind: "flicker",
+    id: "a3",
+    time: "3:12 AM",
+    text: "the umbrella's back by the door. I don't remember bringing it in.",
+  },
 ];
 
 export const COMPLIANT_STEPS: ScriptStep[] = [

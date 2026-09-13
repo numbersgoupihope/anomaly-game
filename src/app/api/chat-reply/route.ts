@@ -59,11 +59,19 @@ function formatTranscript(transcript: TranscriptItem[]): string {
   return transcript.map((item) => `${item.from === "mom" ? "Mom" : "Kid"}: ${item.text}`).join("\n");
 }
 
+function sanitizePlayerName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().slice(0, 20);
+  return trimmed || null;
+}
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const beatId = body?.beatId;
   const history = sanitizeHistory(body?.history);
   const transcript = sanitizeTranscript(body?.transcript);
+  const playerName = sanitizePlayerName(body?.playerName);
+  const askForName = body?.askForName === true;
 
   if (!isBeatId(beatId) || !history) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
@@ -97,6 +105,10 @@ export async function POST(request: Request) {
     transcriptSoFar: formatTranscript(transcript),
     includeWrongness,
     wrongnessPattern: pattern,
+    turnNumber: userTurns,
+    maxTurns: MAX_LIVE_TURNS,
+    playerName,
+    askForName,
   });
 
   try {

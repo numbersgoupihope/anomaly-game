@@ -4,7 +4,9 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import {
   AWARE_STEPS,
   COMPLIANT_STEPS,
+  craigslistAdBody,
   INTRO_STEPS,
+  nameCalloutText,
   type FlickerStep,
   type MessageStep,
   type Path,
@@ -12,7 +14,7 @@ import {
   type ResolvedItem,
   type ScriptStep,
 } from "@/lib/chat-script";
-import { MAX_LIVE_TURNS } from "@/lib/mom-ai";
+import { MAX_LIVE_TURNS, extractFirstName, type BeatId } from "@/lib/mom-ai";
 import { getAudioEngine } from "@/lib/audio";
 import { useAnalogGlitch } from "@/lib/useAnalogGlitch";
 import { useScrollbackGlitch } from "@/lib/useScrollbackGlitch";
@@ -31,9 +33,22 @@ import CorruptedAttachment from "@/components/chat/CorruptedAttachment";
 const FLICKER_SCHEDULE_MS = [2500, 1500, 2500, 1500, 2500, 4500];
 
 // Spliced in right after a live exchange caps out, before the script
-// resumes — a short, human "oh wait, actually" beat so the pivot back to
-// the scripted plot never reads as a cold, unrelated cut.
-const BRIDGE_TEXT = "wait, actually — hold on, one more thing";
+// resumes — a short, human "oh wait, actually" beat plus a dedicated
+// follow-up line that actually continues that thought, so the pivot back to
+// the scripted plot never reads as a cold, unrelated cut. Only defined for
+// beats whose very next scripted line doesn't already read as a natural
+// continuation of a live exchange (opener's "ok good" and read-receipt's
+// "actually — quick thing before I go" already work on their own).
+const BRIDGE_CONTENT: Partial<Record<BeatId, { bridge: string; followUp: string }>> = {
+  "craigslist-setup": {
+    bridge: "wait, actually — hold on, one more thing",
+    followUp: "I probably shouldn't even bring this up, but I can't stop thinking about it",
+  },
+  "impossible-timing": {
+    bridge: "hang on, there's one more thing",
+    followUp: "I keep telling myself it's probably nothing, but I want to show you something",
+  },
+};
 const PRE_BRIDGE_PAUSE_MS = 450;
 
 type LiveHistory = { role: "user" | "assistant"; content: string };
@@ -55,12 +70,19 @@ export default function ChatEpisode() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const mountTimeRef = useRef(0);
   const liveHistoryRef = useRef<Record<string, LiveHistory[]>>({});
+  // Captured from the opener beat's live exchange — used to replace the old
+  // hardcoded "Jordan" wherever the script needs the player's real name.
+  const playerNameRef = useRef<string | null>(null);
 
   useEffect(() => {
     mountTimeRef.current = Date.now();
   }, []);
 
-  const { avatarGlitch, staticBurst } = useAnalogGlitch();
+  // Escalating tension (0–1) driving both the drone's dissonance and the
+  // glitch effects' frequency as the conversation heads toward the choice.
+  const tension = path ? 1 : Math.min(1, stepIndex / INTRO_STEPS.length);
+
+  const { avatarGlitch, staticBurst } = useAnalogGlitch(tension);
   const m1Glitched = useScrollbackGlitch("chat-msg-m1");
 
   // What the player is looking at is entirely a function of where the
@@ -74,10 +96,8 @@ export default function ChatEpisode() {
   // The drone grows more dissonant as the conversation heads toward the
   // choice — reuses the same detune logic the old 30s timer drove.
   useEffect(() => {
-    const introLength = INTRO_STEPS.length;
-    const tension = path ? 1 : Math.min(1, stepIndex / introLength);
     getAudioEngine().setTension(tension);
-  }, [stepIndex, path]);
+  }, [tension]);
 
   // Advances through messages/images/the fourth-wall line automatically;
   // reply/choice/frozen/attachment steps sit here until the player (or the
@@ -87,22 +107,27 @@ export default function ChatEpisode() {
 
     if (currentStep.kind === "message") {
       const step = currentStep;
+      const text = step.id === "m9" ? nameCalloutText(playerNameRef.current) : step.text;
       const t = setTimeout(() => {
         setResolved((r) => [
           ...r,
-          { kind: "message", id: step.id, time: step.time, text: step.text, from: "mom" },
+          { kind: "message", id: step.id, time: step.time, text, from: "mom" },
         ]);
         setStepIndex((i) => i + 1);
-      }, typingMsFor(step.text));
+      }, typingMsFor(text));
       return () => clearTimeout(t);
     }
 
     if (currentStep.kind === "image") {
       const step = currentStep;
+      const content =
+        step.id === "img1"
+          ? { ...step.content, body: craigslistAdBody(playerNameRef.current) }
+          : step.content;
       const t = setTimeout(() => {
         setResolved((r) => [
           ...r,
-          { kind: "image", id: step.id, time: step.time, content: step.content, from: "mom" },
+          { kind: "image", id: step.id, time: step.time, content, from: "mom" },
         ]);
         setStepIndex((i) => i + 1);
       }, 1700);
@@ -196,13 +221,28 @@ export default function ChatEpisode() {
     history.push({ role: "user", content: text });
     liveHistoryRef.current[stepId] = history;
 
+    // Name capture: Mom asks for it naturally on the opener beat's very
+    // first reply (turn 0); whatever the player sends back on the next
+    // turn is the message we try to pull a first name out of.
+    const askForName = step.beatId === "opener" && turn === 0 && playerNameRef.current === null;
+    if (step.beatId === "opener" && turn > 0 && playerNameRef.current === null) {
+      const extracted = extractFirstName(text);
+      if (extracted) playerNameRef.current = extracted;
+    }
+
     setLiveBusy(true);
     let reply = "yeah";
     try {
       const res = await fetch("/api/chat-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ beatId: step.beatId, history, transcript }),
+        body: JSON.stringify({
+          beatId: step.beatId,
+          history,
+          transcript,
+          playerName: playerNameRef.current,
+          askForName,
+        }),
       });
       const data = await res.json().catch(() => null);
       if (typeof data?.reply === "string" && data.reply.trim()) reply = data.reply.trim();
@@ -221,23 +261,33 @@ export default function ChatEpisode() {
     // The handoff to the next scripted beat is mechanical, not conditional
     // on what the player said — this must fire even if the player tried to
     // end the conversation early, so it can never hang waiting for a skip
-    // that no longer exists. A short bridge line (its own typing indicator,
-    // same as any scripted message) softens the pivot instead of cutting
-    // straight back into the plot.
+    // that no longer exists. Beats whose next scripted line doesn't already
+    // read as a natural continuation get a bridge line plus a dedicated
+    // follow-up (its own typing indicator each, same as any scripted
+    // message) so the pivot back to the plot never reads as a cold cut.
     if (turn + 1 >= MAX_LIVE_TURNS) {
-      const bridgeStep: MessageStep = {
-        kind: "message",
-        id: `bridge-${stepId}`,
-        time: "",
-        text: BRIDGE_TEXT,
-      };
-      setActiveSteps((steps) => {
-        const idx = steps.findIndex((s) => s.id === stepId);
-        if (idx === -1) return steps;
-        const copy = [...steps];
-        copy.splice(idx + 1, 0, bridgeStep);
-        return copy;
-      });
+      const bridge = BRIDGE_CONTENT[step.beatId];
+      if (bridge) {
+        const bridgeStep: MessageStep = {
+          kind: "message",
+          id: `bridge-${stepId}`,
+          time: "",
+          text: bridge.bridge,
+        };
+        const followUpStep: MessageStep = {
+          kind: "message",
+          id: `bridge-followup-${stepId}`,
+          time: "",
+          text: bridge.followUp,
+        };
+        setActiveSteps((steps) => {
+          const idx = steps.findIndex((s) => s.id === stepId);
+          if (idx === -1) return steps;
+          const copy = [...steps];
+          copy.splice(idx + 1, 0, bridgeStep, followUpStep);
+          return copy;
+        });
+      }
       setTimeout(() => setStepIndex((i) => i + 1), PRE_BRIDGE_PAUSE_MS);
     }
   }

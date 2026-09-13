@@ -1,6 +1,7 @@
 const BASE_DETUNE_CENTS = 4;
 const MAX_DETUNE_CENTS = 45;
-const DRONE_GAIN = 0.05;
+const BASE_DRONE_GAIN = 0.075;
+const MAX_DRONE_GAIN = 0.16;
 
 function distortionCurve(amount: number): Float32Array {
   const samples = 256;
@@ -29,7 +30,7 @@ class AudioEngine {
           .webkitAudioContext;
       this.ctx = new Ctx();
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.value = 0.6;
+      this.masterGain.gain.value = 0.85;
       this.masterGain.connect(this.ctx.destination);
     }
     return this.ctx;
@@ -44,7 +45,7 @@ class AudioEngine {
     const droneGain = ctx.createGain();
     droneGain.gain.value = 0;
     droneGain.connect(this.masterGain!);
-    droneGain.gain.linearRampToValueAtTime(DRONE_GAIN, ctx.currentTime + 1.5);
+    droneGain.gain.linearRampToValueAtTime(BASE_DRONE_GAIN, ctx.currentTime + 1.5);
     this.droneGain = droneGain;
 
     const oscA = ctx.createOscillator();
@@ -87,10 +88,12 @@ class AudioEngine {
   /** t in [0, 1] — 0 is calm, 1 is the last seconds of the timer. */
   setTension(t: number) {
     this.tension = Math.max(0, Math.min(1, t));
-    if (!this.enabled || !this.ctx || !this.oscB) return;
+    if (!this.enabled || !this.ctx || !this.oscB || !this.droneGain) return;
     const cents =
       BASE_DETUNE_CENTS + (MAX_DETUNE_CENTS - BASE_DETUNE_CENTS) * this.tension;
     this.oscB.detune.linearRampToValueAtTime(cents, this.ctx.currentTime + 0.8);
+    const gain = BASE_DRONE_GAIN + (MAX_DRONE_GAIN - BASE_DRONE_GAIN) * this.tension;
+    this.droneGain.gain.linearRampToValueAtTime(gain, this.ctx.currentTime + 1.2);
   }
 
   playCorrect() {
@@ -105,7 +108,7 @@ class AudioEngine {
     osc.frequency.linearRampToValueAtTime(880, ctx.currentTime + 0.25);
     osc.connect(gain);
 
-    gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.05);
+    gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.05);
     gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
 
     osc.start();
@@ -128,7 +131,7 @@ class AudioEngine {
     osc.frequency.linearRampToValueAtTime(70, ctx.currentTime + 0.4);
     osc.connect(shaper);
 
-    gain.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 0.03);
+    gain.gain.linearRampToValueAtTime(0.13, ctx.currentTime + 0.03);
     gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.45);
 
     osc.start();
@@ -186,7 +189,7 @@ class AudioEngine {
       const progress = (t - now) / duration;
       const burst = 0.08 + Math.random() * 0.14;
       const gap = 0.03 + Math.random() * 0.09;
-      const peak = 0.1 + 0.24 * progress;
+      const peak = 0.15 + 0.33 * progress;
       envelope.gain.setValueAtTime(0, t);
       envelope.gain.linearRampToValueAtTime(peak, t + 0.01);
       envelope.gain.setValueAtTime(peak, t + burst);

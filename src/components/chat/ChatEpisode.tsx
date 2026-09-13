@@ -4,7 +4,6 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import {
   AWARE_STEPS,
   COMPLIANT_STEPS,
-  craigslistAdBody,
   INTRO_STEPS,
   nameCalloutText,
   type FlickerStep,
@@ -14,13 +13,13 @@ import {
   type ResolvedItem,
   type ScriptStep,
 } from "@/lib/chat-script";
+import { MAX_LIVE_TURNS, classifyPathHeuristic, type BeatId } from "@/lib/mom-ai";
 import {
-  MAX_LIVE_TURNS,
-  classifyPathHeuristic,
-  extractFirstName,
-  extractNameLenient,
-  type BeatId,
-} from "@/lib/mom-ai";
+  EVIDENCE_MAX_TURN,
+  EVIDENCE_MIN_TURN,
+  buildStructuralFallbackBody,
+  pickVerbatimMessage,
+} from "@/lib/evidence";
 import { getAudioEngine } from "@/lib/audio";
 import { useAnalogGlitch } from "@/lib/useAnalogGlitch";
 import { useScrollbackGlitch } from "@/lib/useScrollbackGlitch";
@@ -32,6 +31,7 @@ import ImageCard from "@/components/chat/ImageCard";
 import TimeDivider from "@/components/chat/TimeDivider";
 import LiveReplyComposer from "@/components/chat/LiveReplyComposer";
 import CorruptedAttachment from "@/components/chat/CorruptedAttachment";
+import HomeVideoClip from "@/components/chat/HomeVideoClip";
 
 // The "are you still there" pause: on, off, on, off, on, off — landing the
 // message right after the final off, ~15s total.
@@ -62,7 +62,7 @@ function typingMsFor(text: string) {
   return Math.min(2400, Math.max(700, 500 + text.length * 15));
 }
 
-export default function ChatEpisode() {
+export default function ChatEpisode({ playerName }: { playerName: string }) {
   const [activeSteps, setActiveSteps] = useState<ScriptStep[]>(INTRO_STEPS);
   const [stepIndex, setStepIndex] = useState(0);
   const [resolved, setResolved] = useState<ResolvedItem[]>([]);
@@ -72,21 +72,50 @@ export default function ChatEpisode() {
   const [liveTurnsByStep, setLiveTurnsByStep] = useState<Record<string, number>>({});
   const [liveBusy, setLiveBusy] = useState(false);
   const [frozenStopped, setFrozenStopped] = useState(false);
+  // A second, distinct glitch — a chromatic-aberration flash across the
+  // whole viewport, timed to the home video's freeze-frame anomaly. Kept
+  // separate from the avatar-flicker/static-burst pair so the two beats
+  // don't read as the same trick reused.
+  const [videoGlitch, setVideoGlitch] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const mountTimeRef = useRef(0);
   const liveHistoryRef = useRef<Record<string, LiveHistory[]>>({});
-  // Captured from the opener beat's live exchange — used to replace the old
-  // hardcoded "Jordan" wherever the script needs the player's real name.
-  const playerNameRef = useRef<string | null>(null);
+
+  // The dynamic evidence state machine (section 2c) — deterministic app
+  // logic, not driven by Mom's chat prompt. "checking" locks out overlapping
+  // extraction attempts across turns; the generated (or, on failure by the
+  // turn window's end, structurally-faked) body is cached here until the
+  // ad's own step reads it.
+  const evidenceStateRef = useRef<"pending" | "checking" | "ready">("pending");
+  const evidenceBodyRef = useRef<string | null>(null);
+  const playerLiveMessagesRef = useRef<string[]>([]);
+  const evidenceTurnRef = useRef(0);
+  // Mirrors evidenceTurnRef as state purely so the tension calculation
+  // below (and the audio engine effect that reads it) re-renders on every
+  // eligible turn — the ref alone wouldn't trigger anything.
+  const [evidenceTurn, setEvidenceTurn] = useState(0);
 
   useEffect(() => {
     mountTimeRef.current = Date.now();
   }, []);
 
-  // Escalating tension (0–1) driving both the drone's dissonance and the
-  // glitch effects' frequency as the conversation heads toward the choice.
-  const tension = path ? 1 : Math.min(1, stepIndex / INTRO_STEPS.length);
+  // Escalating tension (0–1) driving the drone's dissonance and the glitch
+  // effects' frequency. Before the evidence ad reveals, tension tracks the
+  // state machine's proximity to firing the reveal (section 2c) — the
+  // closer the app is to that trigger, the more the drone detunes — rather
+  // than a fixed timer. Once the ad has revealed, it reverts to tracking
+  // overall story progress for the rest of the episode.
+  // Both sub-formulas are individually monotonic (evidenceTurn never
+  // decreases, and freezes once the opener/craigslist-setup beats are
+  // done; stepIndex never decreases either) and each is 0 while its own
+  // stretch of the episode hasn't started yet, so taking their max is a
+  // purely-derived way to get a monotonic overall value — no extra "peak
+  // so far" state needed, and nothing to reset.
+  const adRevealed = resolved.some((item) => item.id === "img1");
+  const evidenceProximity = Math.min(1, evidenceTurn / EVIDENCE_MAX_TURN);
+  const storyProgress = adRevealed ? Math.min(1, stepIndex / INTRO_STEPS.length) : 0;
+  const tension = path ? 1 : Math.max(evidenceProximity, storyProgress);
 
   const { avatarGlitch, staticBurst } = useAnalogGlitch(tension);
   const m1Glitched = useScrollbackGlitch("chat-msg-m1");
@@ -99,8 +128,8 @@ export default function ChatEpisode() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [resolved, currentStep, flickerOn]);
 
-  // The drone grows more dissonant as the conversation heads toward the
-  // choice — reuses the same detune logic the old 30s timer drove.
+  // The drone grows more dissonant as tension climbs, whichever formula is
+  // currently driving it.
   useEffect(() => {
     getAudioEngine().setTension(tension);
   }, [tension]);
@@ -113,7 +142,7 @@ export default function ChatEpisode() {
 
     if (currentStep.kind === "message") {
       const step = currentStep;
-      const text = step.id === "m9" ? nameCalloutText(playerNameRef.current) : step.text;
+      const text = step.id === "m9" ? nameCalloutText(playerName) : step.text;
       const t = setTimeout(() => {
         setResolved((r) => [
           ...r,
@@ -126,9 +155,19 @@ export default function ChatEpisode() {
 
     if (currentStep.kind === "image") {
       const step = currentStep;
+      // Safety net: by the time this beat is reached the state machine has
+      // almost always already resolved (extraction/transform, or the
+      // structural fallback at the turn window's close) — but if it somehow
+      // hasn't, fall back to the same structural trick right here rather
+      // than ever showing blank or generic placeholder copy.
       const content =
         step.id === "img1"
-          ? { ...step.content, body: craigslistAdBody(playerNameRef.current) }
+          ? {
+              ...step.content,
+              body:
+                evidenceBodyRef.current ??
+                buildStructuralFallbackBody(pickVerbatimMessage(playerLiveMessagesRef.current), playerName),
+            }
           : step.content;
       const t = setTimeout(() => {
         setResolved((r) => [
@@ -158,7 +197,7 @@ export default function ChatEpisode() {
       }, 1400);
       return () => clearTimeout(t);
     }
-  }, [currentStep]);
+  }, [currentStep, playerName]);
 
   // "Are you still there" — the typing indicator starts and stops a few
   // times before the message finally lands.
@@ -206,6 +245,59 @@ export default function ChatEpisode() {
     return () => clearTimeout(t);
   }, [currentStep]);
 
+  // 2c — the deterministic (non-AI) evidence state machine. Called with the
+  // full grounding transcript right after each eligible player message;
+  // fires and forgets from handleLiveSend so it never delays Mom's own live
+  // reply. Extraction and transformation are two separate, narrow calls —
+  // Mom's chat prompt is never involved and never told this is happening.
+  async function runEvidenceCheck(
+    transcriptSoFar: { from: "mom" | "you"; text: string }[],
+    turnNumber: number
+  ) {
+    let succeeded = false;
+    try {
+      const extractRes = await fetch("/api/evidence-extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: transcriptSoFar }),
+      });
+      const extractData = await extractRes.json().catch(() => null);
+      const detail = typeof extractData?.detail === "string" ? extractData.detail.trim() : null;
+
+      if (detail) {
+        const transformRes = await fetch("/api/evidence-transform", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ detail, playerName }),
+        });
+        const transformData = await transformRes.json().catch(() => null);
+        const generatedBody =
+          typeof transformData?.body === "string" ? transformData.body.trim() : null;
+        if (generatedBody) {
+          evidenceBodyRef.current = generatedBody;
+          evidenceStateRef.current = "ready";
+          succeeded = true;
+        }
+      }
+    } catch {
+      // fall through — either retry on a later turn, or fall back below
+    }
+
+    if (!succeeded) {
+      if (turnNumber >= EVIDENCE_MAX_TURN) {
+        // The window has closed with nothing usable extracted — fall back
+        // to the structural trick (a verbatim quote), never generic copy.
+        evidenceBodyRef.current = buildStructuralFallbackBody(
+          pickVerbatimMessage(playerLiveMessagesRef.current),
+          playerName
+        );
+        evidenceStateRef.current = "ready";
+      } else {
+        evidenceStateRef.current = "pending";
+      }
+    }
+  }
+
   async function handleLiveSend(text: string) {
     const step = currentStep as ReplyStep;
     const stepId = step.id;
@@ -236,18 +328,28 @@ export default function ChatEpisode() {
       return { from: "mom" as const, text: "[sent a voice memo]" };
     });
 
+    // Evidence state machine: only the opener and craigslist-setup beats
+    // count toward the turn window (turns 1-6 combined) — extraction is
+    // never attempted before turn 3, and re-runs on every eligible turn
+    // through turn 6. Fired without awaiting so it never delays Mom's reply.
+    if (step.beatId === "opener" || step.beatId === "craigslist-setup") {
+      playerLiveMessagesRef.current = [...playerLiveMessagesRef.current, text];
+      evidenceTurnRef.current += 1;
+      const turnNow = evidenceTurnRef.current;
+      setEvidenceTurn(turnNow);
+      if (
+        evidenceStateRef.current === "pending" &&
+        turnNow >= EVIDENCE_MIN_TURN &&
+        turnNow <= EVIDENCE_MAX_TURN
+      ) {
+        evidenceStateRef.current = "checking";
+        void runEvidenceCheck(transcript, turnNow);
+      }
+    }
+
     const history = liveHistoryRef.current[stepId] ?? [];
     history.push({ role: "user", content: text });
     liveHistoryRef.current[stepId] = history;
-
-    // Name capture: Mom asks for it naturally on the opener beat's very
-    // first reply (turn 0); whatever the player sends back on the next
-    // turn is the message we try to pull a first name out of.
-    const askForName = step.beatId === "opener" && turn === 0 && playerNameRef.current === null;
-    if (step.beatId === "opener" && turn > 0 && playerNameRef.current === null) {
-      const extracted = extractFirstName(text);
-      if (extracted) playerNameRef.current = extracted;
-    }
 
     setLiveBusy(true);
     let reply = "yeah";
@@ -259,8 +361,7 @@ export default function ChatEpisode() {
           beatId: step.beatId,
           history,
           transcript,
-          playerName: playerNameRef.current,
-          askForName,
+          playerName,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -317,38 +418,6 @@ export default function ChatEpisode() {
     setStepIndex(0);
   }
 
-  // Deterministic, client-only — deliberately not routed through the AI so
-  // it never depends on a live model reply having actually asked for (or
-  // parsed) the name usably. Falls back gracefully to no name at all rather
-  // than ever inserting a wrong one.
-  function handleNameCapture(text: string) {
-    const step = currentStep as { id: string };
-    const youItem: ResolvedItem = {
-      kind: "message",
-      id: `you-${step.id}`,
-      time: "",
-      text,
-      from: "you",
-    };
-    setResolved((r) => [...r, youItem]);
-
-    const extracted = extractNameLenient(text);
-    if (extracted) playerNameRef.current = extracted;
-    const ack = extracted
-      ? `${extracted} — right, sorry. lol, ok.`
-      : "lol nvm, ignore that — sorry";
-
-    setLiveBusy(true);
-    setTimeout(() => {
-      setResolved((r) => [
-        ...r,
-        { kind: "message", id: `mom-ack-${step.id}`, time: "", text: ack, from: "mom" },
-      ]);
-      setLiveBusy(false);
-      setStepIndex((i) => i + 1);
-    }, 900);
-  }
-
   // The free-text replacement for the old two-button choice screen: one
   // reply, classified server-side (with a client-side heuristic fallback if
   // the request fails outright) into whichever ending path it leans
@@ -390,7 +459,7 @@ export default function ChatEpisode() {
           beatId: "choice",
           history: [{ role: "user", content: text }],
           transcript,
-          playerName: playerNameRef.current,
+          playerName,
           askForName: false,
         }),
       });
@@ -423,6 +492,12 @@ export default function ChatEpisode() {
       {disorient && (
         <div className="pointer-events-none fixed inset-0 z-40 bg-white mix-blend-difference" />
       )}
+      {videoGlitch && (
+        <div className="pointer-events-none fixed inset-0 z-40">
+          <div className="absolute inset-0 -translate-x-[3px] bg-red-500/25 mix-blend-screen" />
+          <div className="absolute inset-0 translate-x-[3px] bg-cyan-400/25 mix-blend-screen" />
+        </div>
+      )}
       <div
         className={`transition-transform duration-150 ${
           disorient ? "-rotate-1 scale-[1.02]" : ""
@@ -452,6 +527,8 @@ export default function ChatEpisode() {
                   <div className="flex justify-start">
                     <ImageCard content={item.content} />
                   </div>
+                ) : item.kind === "home-video" ? (
+                  <HomeVideoClip initialPlayed onPlayed={() => {}} />
                 ) : (
                   <CorruptedAttachment initialPlayed onPlayed={() => {}} />
                 )}
@@ -480,6 +557,23 @@ export default function ChatEpisode() {
             />
           )}
 
+          {currentStep?.kind === "home-video" && (
+            <HomeVideoClip
+              onFreezeFrame={() => {
+                setVideoGlitch(true);
+                setTimeout(() => setVideoGlitch(false), 260);
+              }}
+              onPlayed={() => {
+                const step = currentStep;
+                setResolved((r) => [
+                  ...r,
+                  { kind: "home-video", id: step.id, time: step.time, from: "mom" },
+                ]);
+                setStepIndex((i) => i + 1);
+              }}
+            />
+          )}
+
           <div ref={bottomRef} />
         </div>
       </div>
@@ -491,9 +585,6 @@ export default function ChatEpisode() {
           disabled={liveBusy}
           onSend={handleLiveSend}
         />
-      )}
-      {currentStep?.kind === "name-capture" && (
-        <LiveReplyComposer turnsUsed={0} maxTurns={1} disabled={liveBusy} onSend={handleNameCapture} />
       )}
       {currentStep?.kind === "choice-input" && (
         <LiveReplyComposer turnsUsed={0} maxTurns={1} disabled={liveBusy} onSend={handleChoiceSend} />

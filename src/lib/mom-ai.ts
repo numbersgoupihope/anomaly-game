@@ -82,7 +82,6 @@ export function buildMomSystemPrompt({
   turnNumber,
   maxTurns,
   playerName,
-  askForName,
   classify,
 }: {
   beatId: BeatId;
@@ -92,17 +91,17 @@ export function buildMomSystemPrompt({
   turnNumber: number;
   maxTurns: number;
   playerName: string | null;
-  askForName: boolean;
   classify?: boolean;
 }): string {
   const beat = MOM_AI_CONTEXTS[beatId];
   const isFinalTurn = turnNumber >= maxTurns;
 
-  const nameGuidance = askForName
-    ? `You don't know the kid's first name yet. Naturally ask for or confirm it as part of this reply, in a casual, unforced way (e.g. "lol wait what's your name again, my phone's being weird" or similar) — just once, don't make a big deal of it.`
-    : playerName
-      ? `You know the kid's name is ${playerName}. You may address them by name naturally sometimes, the way a parent would, but don't force it into every message.`
-      : "";
+  // The player's name is captured up front on a pre-scene setup screen, so
+  // Mom already knows it from the very first message — she never needs to
+  // ask for it mid-conversation.
+  const nameGuidance = playerName
+    ? `You know the kid's name is ${playerName}. You may address them by name naturally sometimes, the way a parent would, but don't force it into every message.`
+    : "";
 
   // Every beat in this episode is immediately followed by more scripted
   // content the instant this exchange caps out (either a bridge line or the
@@ -232,47 +231,4 @@ export function classifyPathHeuristic(text: string): "aware" | "compliant" {
   // Ambiguous or no clear signal — default to the more common curious
   // reaction rather than leaving it unresolved.
   return "compliant";
-}
-
-// Lightweight, deterministic first-name extraction — no extra AI call.
-// Only ever called against a message sent in direct response to Mom asking
-// for the kid's name, so context already strongly suggests a name is coming.
-const NOT_NAMES = new Set([
-  "lol", "idk", "why", "what", "um", "uh", "no", "yes", "yeah", "nah",
-  "maybe", "ok", "okay", "nothing", "stop", "huh", "who", "umm", "hmm",
-  "sure", "fine", "whatever", "seriously", "wait", "hey", "mom",
-]);
-
-export function extractFirstName(text: string): string | null {
-  const cleaned = text
-    .trim()
-    .replace(/^(it'?s|i'?m|im|my name is|name'?s|this is)\s+/i, "")
-    .replace(/[.,!?;:].*$/, "")
-    .trim();
-  const firstWord = cleaned.split(/\s+/)[0];
-  if (!firstWord) return null;
-  if (!/^[A-Za-z][A-Za-z'-]{1,19}$/.test(firstWord)) return null;
-  if (NOT_NAMES.has(firstWord.toLowerCase())) return null;
-  return firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
-}
-
-// A more permissive variant for the dedicated name-capture step, where the
-// question ("what's your name again?") is explicit and unambiguous, so the
-// aggressive blocklist filtering extractFirstName needs for scanning
-// arbitrary chat turns isn't appropriate — almost anything short and
-// alphabetic typed here is genuinely intended as a name. Still refuses to
-// treat a completely empty or clearly-not-a-name reply as one.
-export function extractNameLenient(text: string): string | null {
-  const strict = extractFirstName(text);
-  if (strict) return strict;
-  const cleaned = text
-    .trim()
-    .replace(/^(it'?s|i'?m|im|my name is|name'?s|this is)\s+/i, "")
-    .replace(/[.,!?;:].*$/, "")
-    .trim()
-    .split(/\s+/)[0]
-    ?.replace(/[^A-Za-z'-]/g, "");
-  if (!cleaned || cleaned.length < 2 || cleaned.length > 20) return null;
-  if (NOT_NAMES.has(cleaned.toLowerCase())) return null;
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
 }

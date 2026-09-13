@@ -73,7 +73,6 @@ export async function POST(request: Request) {
   const history = sanitizeHistory(body?.history);
   const transcript = sanitizeTranscript(body?.transcript);
   const playerName = sanitizePlayerName(body?.playerName);
-  const askForName = body?.askForName === true;
 
   if (!isBeatId(beatId) || !history) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
@@ -117,7 +116,6 @@ export async function POST(request: Request) {
     turnNumber: userTurns,
     maxTurns: MAX_LIVE_TURNS,
     playerName,
-    askForName,
     classify: isChoice,
   });
 

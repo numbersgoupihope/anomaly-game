@@ -4,7 +4,7 @@ import { useState } from "react";
 import { getAudioEngine } from "@/lib/audio";
 
 const CAPTION = "mm— ...outside... it's not—... okay";
-const PLAY_MS = 3450;
+const PLAY_MS = 3850;
 
 export default function CorruptedAttachment({
   onPlayed,

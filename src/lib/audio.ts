@@ -140,17 +140,20 @@ class AudioEngine {
 
   /** A warped, stuttering, garbled tone for the corrupted voice memo —
    * deep pitch distortion, panning across as if approaching, rising
-   * volume, then an abrupt hard cutoff (no fade-out). */
+   * volume, then an abrupt hard cutoff (no fade-out). Intensity matched to
+   * the home video beat's audio (playHomeVideoAudio) so the two beats feel
+   * like they belong to the same escalating build. */
   playCorruptedVoice() {
     const ctx = this.ensureContext();
-    const duration = 3.4;
+    const duration = 3.8;
     const now = ctx.currentTime;
     const end = now + duration;
 
-    // Pans from one side toward center as it "approaches".
+    // Pans further across, past center, as it "approaches" — a stronger
+    // sense of closing in than before.
     const panner = ctx.createStereoPanner();
-    panner.pan.setValueAtTime(-0.85, now);
-    panner.pan.linearRampToValueAtTime(0.15, end);
+    panner.pan.setValueAtTime(-0.9, now);
+    panner.pan.linearRampToValueAtTime(0.35, end);
     panner.connect(this.masterGain!);
 
     const envelope = ctx.createGain();
@@ -160,12 +163,12 @@ class AudioEngine {
     // Opens up slightly as it approaches, like clearing through a bad signal.
     const filter = ctx.createBiquadFilter();
     filter.type = "lowpass";
-    filter.frequency.setValueAtTime(600, now);
-    filter.frequency.linearRampToValueAtTime(2200, end);
+    filter.frequency.setValueAtTime(550, now);
+    filter.frequency.linearRampToValueAtTime(2400, end);
     filter.connect(envelope);
 
     const shaper = ctx.createWaveShaper();
-    shaper.curve = distortionCurve(55) as Float32Array<ArrayBuffer>;
+    shaper.curve = distortionCurve(70) as Float32Array<ArrayBuffer>;
     shaper.connect(filter);
 
     const osc = ctx.createOscillator();
@@ -173,12 +176,12 @@ class AudioEngine {
     osc.frequency.setValueAtTime(120, now);
     osc.connect(shaper);
 
-    // Pitch wobble — warped-tape vibrato, deepening as it goes.
+    // Pitch wobble — warped-tape vibrato, deepening as it goes, deeper than before.
     const wobble = ctx.createOscillator();
     wobble.frequency.value = 4.5;
     const wobbleGain = ctx.createGain();
-    wobbleGain.gain.setValueAtTime(30, now);
-    wobbleGain.gain.linearRampToValueAtTime(60, end);
+    wobbleGain.gain.setValueAtTime(45, now);
+    wobbleGain.gain.linearRampToValueAtTime(85, end);
     wobble.connect(wobbleGain);
     wobbleGain.connect(osc.frequency);
 
@@ -189,7 +192,7 @@ class AudioEngine {
       const progress = (t - now) / duration;
       const burst = 0.08 + Math.random() * 0.14;
       const gap = 0.03 + Math.random() * 0.09;
-      const peak = 0.15 + 0.33 * progress;
+      const peak = 0.2 + 0.4 * progress;
       envelope.gain.setValueAtTime(0, t);
       envelope.gain.linearRampToValueAtTime(peak, t + 0.01);
       envelope.gain.setValueAtTime(peak, t + burst);
@@ -204,6 +207,74 @@ class AudioEngine {
     osc.stop(end + 0.05);
     wobble.start(now);
     wobble.stop(end + 0.05);
+  }
+
+  /** The home video beat's audio — the opening phrase of "Twinkle Twinkle
+   * Little Star" (public domain: the 18th-century French folk melody
+   * "Ah! vous dirai-je, maman"), synthesized procedurally, played in
+   * reverse, pitched well down, with each note dragging longer than the
+   * last — like tape being pulled slower and slower — then an abrupt hard
+   * cutoff synced to the clip's cut to black. No copyrighted recording or
+   * modern melody is used anywhere here. */
+  playHomeVideoAudio() {
+    const ctx = this.ensureContext();
+    const duration = 4.4;
+    const now = ctx.currentTime;
+    const end = now + duration;
+    const baseFreq = 261.63 / 2.5; // C4, pitched down roughly an octave and a half
+
+    // "Twin-kle twin-kle lit-tle star" as semitone offsets from the base
+    // note, reversed.
+    const OPENING_PHRASE_SEMITONES = [0, 0, 7, 7, 9, 9, 7];
+    const notes = [...OPENING_PHRASE_SEMITONES].reverse();
+
+    // Slow stereo drift, like the sound is moving past rather than sitting still.
+    const panner = ctx.createStereoPanner();
+    panner.pan.setValueAtTime(-0.4, now);
+    panner.pan.linearRampToValueAtTime(0.4, end);
+    panner.connect(this.masterGain!);
+
+    // Closes in like a bad tape head — brighter at first, muffled by the end.
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(1800, now);
+    filter.frequency.linearRampToValueAtTime(500, end);
+    filter.connect(panner);
+
+    const masterEnv = ctx.createGain();
+    masterEnv.gain.setValueAtTime(0, now);
+    masterEnv.gain.linearRampToValueAtTime(0.22, now + 0.3);
+    masterEnv.connect(filter);
+
+    let t = now;
+    const perNoteBase = duration / notes.length;
+    notes.forEach((semitone, i) => {
+      const stretch = 1 + (i / notes.length) * 1.8; // later notes drag longer
+      const noteDur = perNoteBase * stretch * 0.9;
+      const freq = baseFreq * Math.pow(2, semitone / 12);
+
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.linearRampToValueAtTime(freq * (1 - 0.08 * (i / notes.length)), t + noteDur);
+
+      const noteGain = ctx.createGain();
+      noteGain.gain.setValueAtTime(0, t);
+      noteGain.gain.linearRampToValueAtTime(1, t + 0.05);
+      noteGain.gain.setValueAtTime(1, t + noteDur * 0.7);
+      noteGain.gain.linearRampToValueAtTime(0, t + noteDur);
+      noteGain.connect(masterEnv);
+
+      osc.connect(noteGain);
+      osc.start(t);
+      osc.stop(t + noteDur + 0.05);
+
+      t += noteDur;
+    });
+
+    // Hard cut — no fade, matching the clip's instant cut to black.
+    masterEnv.gain.cancelScheduledValues(end);
+    masterEnv.gain.setValueAtTime(0, end);
   }
 }
 

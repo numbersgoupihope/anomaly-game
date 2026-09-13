@@ -25,10 +25,6 @@ export type ReplyStep = { kind: "reply"; id: string; beatId: BeatId };
 // A single free-text reply, one shot — the player's answer here is
 // classified (aware vs. compliant) instead of picking from fixed buttons.
 export type ChoiceInputStep = { kind: "choice-input"; id: string };
-// One deterministic, client-only exchange near the start that captures the
-// player's real first name — not routed through the AI at all, so it never
-// depends on the model having actually asked in a usable way.
-export type NameCaptureStep = { kind: "name-capture"; id: string };
 // The "are you still there" pause: the typing indicator starts/stops a few
 // times before this message finally lands.
 export type FlickerStep = { kind: "flicker"; id: string; time: string; text: string };
@@ -36,6 +32,9 @@ export type FlickerStep = { kind: "flicker"; id: string; time: string; text: str
 export type FrozenStep = { kind: "frozen"; id: string };
 // A "voice memo" attachment that plays back warped/garbled audio.
 export type CorruptedAttachmentStep = { kind: "corrupted-attachment"; id: string; time: string };
+// An old home video clip — abstract/stylized analog-degraded footage with
+// one unacknowledged, barely-perceptible wrongness in it.
+export type HomeVideoStep = { kind: "home-video"; id: string; time: string };
 // A one-off line referencing the player's real session — never explained.
 export type FourthWallStep = { kind: "fourth-wall"; id: string };
 
@@ -44,23 +43,13 @@ export type ScriptStep =
   | ImageStep
   | ReplyStep
   | ChoiceInputStep
-  | NameCaptureStep
   | FlickerStep
   | FrozenStep
   | CorruptedAttachmentStep
+  | HomeVideoStep
   | FourthWallStep;
 
 export type Path = "aware" | "compliant";
-
-// The Craigslist ad's callout is the one place the player's real name should
-// land — a specific wrong name (the old hardcoded "Jordan") reads worse than
-// no name at all, so the fallback rephrases around it instead of guessing.
-export function craigslistAdBody(name: string | null): string {
-  const nameClause = name
-    ? `a pharmacy loyalty receipt with your name printed right on it: ${name}.`
-    : "a pharmacy loyalty receipt with your name printed right on it, clear as anything.";
-  return `You were standing outside the pharmacy on 8th, red umbrella, on the phone with someone. You dropped a receipt when you were digging for your keys — ${nameClause} I picked it up to give it back but you'd already crossed the street. I still have it. I think about it more than I should. If this is you, I have something of yours.`;
-}
 
 export function nameCalloutText(name: string | null): string {
   return name
@@ -69,13 +58,6 @@ export function nameCalloutText(name: string | null): string {
 }
 
 export const INTRO_STEPS: ScriptStep[] = [
-  {
-    kind: "message",
-    id: "m0",
-    time: "9:40 PM",
-    text: "ok this is so dumb but my phone just glitched and merged your contact with someone else's, what's your name again? lol I don't trust it right now",
-  },
-  { kind: "name-capture", id: "namecapture1" },
   { kind: "message", id: "m1", time: "9:41 PM", text: "hey are you awake" },
   {
     kind: "message",
@@ -116,7 +98,9 @@ export const INTRO_STEPS: ScriptStep[] = [
       kind: "craigslist",
       title: "you dropped this — w4m — 24 (Riverside & 8th)",
       meta: "Posted 3 years, 7 months ago",
-      body: craigslistAdBody(null),
+      // Always overwritten at resolve time by the dynamic evidence system
+      // (src/lib/evidence.ts) — this placeholder is never actually shown.
+      body: "",
     },
   },
   { kind: "message", id: "m9", time: "9:48 PM", text: nameCalloutText(null) },
@@ -147,6 +131,13 @@ export const INTRO_STEPS: ScriptStep[] = [
         "I live two blocks from there. Never seen anyone drop anything outside it. Still think about this.",
     },
   },
+  {
+    kind: "message",
+    id: "m-video-lead",
+    time: "9:54 PM",
+    text: "oh also — random — found this old video, thought you'd like it :)",
+  },
+  { kind: "home-video", id: "homevideo1", time: "9:54 PM" },
   {
     kind: "message",
     id: "m13",
@@ -222,4 +213,5 @@ export type ResolvedItem =
       live?: boolean;
     }
   | { kind: "image"; id: string; time: string; content: ImageContent; from: "mom" }
-  | { kind: "attachment"; id: string; time: string; from: "mom" };
+  | { kind: "attachment"; id: string; time: string; from: "mom" }
+  | { kind: "home-video"; id: string; time: string; from: "mom" };

@@ -6,6 +6,7 @@ import {
   COMPLIANT_STEPS,
   INTRO_STEPS,
   type FlickerStep,
+  type MessageStep,
   type Path,
   type ReplyStep,
   type ResolvedItem,
@@ -28,6 +29,12 @@ import CorruptedAttachment from "@/components/chat/CorruptedAttachment";
 // The "are you still there" pause: on, off, on, off, on, off — landing the
 // message right after the final off, ~15s total.
 const FLICKER_SCHEDULE_MS = [2500, 1500, 2500, 1500, 2500, 4500];
+
+// Spliced in right after a live exchange caps out, before the script
+// resumes — a short, human "oh wait, actually" beat so the pivot back to
+// the scripted plot never reads as a cold, unrelated cut.
+const BRIDGE_TEXT = "wait, actually — hold on, one more thing";
+const PRE_BRIDGE_PAUSE_MS = 450;
 
 type LiveHistory = { role: "user" | "assistant"; content: string };
 
@@ -214,9 +221,24 @@ export default function ChatEpisode() {
     // The handoff to the next scripted beat is mechanical, not conditional
     // on what the player said — this must fire even if the player tried to
     // end the conversation early, so it can never hang waiting for a skip
-    // that no longer exists.
+    // that no longer exists. A short bridge line (its own typing indicator,
+    // same as any scripted message) softens the pivot instead of cutting
+    // straight back into the plot.
     if (turn + 1 >= MAX_LIVE_TURNS) {
-      setTimeout(() => setStepIndex((i) => i + 1), 900);
+      const bridgeStep: MessageStep = {
+        kind: "message",
+        id: `bridge-${stepId}`,
+        time: "",
+        text: BRIDGE_TEXT,
+      };
+      setActiveSteps((steps) => {
+        const idx = steps.findIndex((s) => s.id === stepId);
+        if (idx === -1) return steps;
+        const copy = [...steps];
+        copy.splice(idx + 1, 0, bridgeStep);
+        return copy;
+      });
+      setTimeout(() => setStepIndex((i) => i + 1), PRE_BRIDGE_PAUSE_MS);
     }
   }
 

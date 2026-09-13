@@ -210,10 +210,14 @@ export default function ChatEpisode() {
     ]);
     setLiveBusy(false);
     setLiveTurnsByStep((m) => ({ ...m, [stepId]: turn + 1 }));
-  }
 
-  function handleLiveSkip() {
-    setStepIndex((i) => i + 1);
+    // The handoff to the next scripted beat is mechanical, not conditional
+    // on what the player said — this must fire even if the player tried to
+    // end the conversation early, so it can never hang waiting for a skip
+    // that no longer exists.
+    if (turn + 1 >= MAX_LIVE_TURNS) {
+      setTimeout(() => setStepIndex((i) => i + 1), 900);
+    }
   }
 
   function handlePick(p: Path) {
@@ -299,7 +303,6 @@ export default function ChatEpisode() {
           maxTurns={MAX_LIVE_TURNS}
           disabled={liveBusy}
           onSend={handleLiveSend}
-          onSkip={handleLiveSkip}
         />
       )}
     </>

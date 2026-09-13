@@ -4,7 +4,9 @@ import {
   MAX_LIVE_TURNS,
   MOM_AI_CONTEXTS,
   buildMomSystemPrompt,
+  classifyPathHeuristic,
   fallbackReply,
+  parseClassifiedReply,
   rollWrongness,
   type BeatId,
 } from "@/lib/mom-ai";
@@ -77,9 +79,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
+  const isChoice = beatId === "choice";
+  const lastUserMessage = history[history.length - 1]?.content ?? "";
+
   const userTurns = history.filter((m) => m.role === "user").length;
   if (userTurns > MAX_LIVE_TURNS) {
-    return NextResponse.json({ reply: fallbackReply(beatId) });
+    return NextResponse.json({
+      reply: fallbackReply(beatId),
+      ...(isChoice ? { path: classifyPathHeuristic(lastUserMessage) } : {}),
+    });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -90,6 +98,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       reply: fallbackReply(beatId),
       fallbackReason: "missing_api_key",
+      ...(isChoice ? { path: classifyPathHeuristic(lastUserMessage) } : {}),
     });
   }
 
@@ -109,6 +118,7 @@ export async function POST(request: Request) {
     maxTurns: MAX_LIVE_TURNS,
     playerName,
     askForName,
+    classify: isChoice,
   });
 
   try {
@@ -142,17 +152,32 @@ export async function POST(request: Request) {
     const textBlock = response.content.find(
       (block): block is Anthropic.TextBlock => block.type === "text"
     );
-    const reply = textBlock?.text.trim();
+    const rawReply = textBlock?.text.trim();
 
-    if (!reply) {
+    if (!rawReply) {
       console.error("[chat-reply] Anthropic response had no usable text block:", response);
     }
 
     console.log(
-      `[chat-reply] beat=${beatId} wrongness=${includeWrongness ? pattern : "none"} reply="${reply}"`
+      `[chat-reply] beat=${beatId} wrongness=${includeWrongness ? pattern : "none"} reply="${rawReply}"`
     );
 
-    return NextResponse.json({ reply: reply || fallbackReply(beatId) });
+    if (!isChoice) {
+      return NextResponse.json({ reply: rawReply || fallbackReply(beatId) });
+    }
+
+    // The model was asked for "CLASSIFICATION: <path>\n\n<reply>". If it
+    // didn't follow that format, the classification must still resolve —
+    // fall back to a keyword heuristic on the player's own message rather
+    // than leaving the path undecided.
+    const parsed = parseClassifiedReply(rawReply ?? "");
+    const path = parsed.path ?? classifyPathHeuristic(lastUserMessage);
+    if (!parsed.path) {
+      console.error(
+        `[chat-reply] choice beat reply didn't follow CLASSIFICATION format, used heuristic instead: "${rawReply}"`
+      );
+    }
+    return NextResponse.json({ reply: parsed.reply || fallbackReply(beatId), path });
   } catch (err) {
     let reason = "unknown_error";
     if (err instanceof Anthropic.AuthenticationError) reason = "authentication_error (bad or revoked API key)";
@@ -165,6 +190,10 @@ export async function POST(request: Request) {
 
     console.error("[chat-reply] Anthropic API call failed:", reason, err);
 
-    return NextResponse.json({ reply: fallbackReply(beatId), fallbackReason: reason });
+    return NextResponse.json({
+      reply: fallbackReply(beatId),
+      fallbackReason: reason,
+      ...(isChoice ? { path: classifyPathHeuristic(lastUserMessage) } : {}),
+    });
   }
 }

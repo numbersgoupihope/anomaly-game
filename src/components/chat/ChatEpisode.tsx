@@ -14,7 +14,13 @@ import {
   type ResolvedItem,
   type ScriptStep,
 } from "@/lib/chat-script";
-import { MAX_LIVE_TURNS, extractFirstName, type BeatId } from "@/lib/mom-ai";
+import {
+  MAX_LIVE_TURNS,
+  classifyPathHeuristic,
+  extractFirstName,
+  extractNameLenient,
+  type BeatId,
+} from "@/lib/mom-ai";
 import { getAudioEngine } from "@/lib/audio";
 import { useAnalogGlitch } from "@/lib/useAnalogGlitch";
 import { useScrollbackGlitch } from "@/lib/useScrollbackGlitch";
@@ -24,7 +30,6 @@ import TypingIndicator from "@/components/chat/TypingIndicator";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ImageCard from "@/components/chat/ImageCard";
 import TimeDivider from "@/components/chat/TimeDivider";
-import ChoicePrompt from "@/components/chat/ChoicePrompt";
 import LiveReplyComposer from "@/components/chat/LiveReplyComposer";
 import CorruptedAttachment from "@/components/chat/CorruptedAttachment";
 
@@ -66,6 +71,7 @@ export default function ChatEpisode() {
   const [disorient, setDisorient] = useState(false);
   const [liveTurnsByStep, setLiveTurnsByStep] = useState<Record<string, number>>({});
   const [liveBusy, setLiveBusy] = useState(false);
+  const [frozenStopped, setFrozenStopped] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const mountTimeRef = useRef(0);
@@ -187,6 +193,19 @@ export default function ChatEpisode() {
     return () => timers.forEach(clearTimeout);
   }, [currentStep]);
 
+  // The compliant ending's final beat is a typing indicator that never
+  // resolves into a message — intentional, but indistinguishable from the
+  // app being broken if it just bounces forever. After a few seconds it
+  // visibly stops animating instead, so it reads as "this stopped
+  // happening" rather than "this is stuck."
+  useEffect(() => {
+    if (currentStep?.kind !== "frozen") return;
+    // This step is terminal (never re-entered), so there's no need to ever
+    // reset this back to false — it only fires once, the one time it matters.
+    const t = setTimeout(() => setFrozenStopped(true), 4500);
+    return () => clearTimeout(t);
+  }, [currentStep]);
+
   async function handleLiveSend(text: string) {
     const step = currentStep as ReplyStep;
     const stepId = step.id;
@@ -298,6 +317,104 @@ export default function ChatEpisode() {
     setStepIndex(0);
   }
 
+  // Deterministic, client-only — deliberately not routed through the AI so
+  // it never depends on a live model reply having actually asked for (or
+  // parsed) the name usably. Falls back gracefully to no name at all rather
+  // than ever inserting a wrong one.
+  function handleNameCapture(text: string) {
+    const step = currentStep as { id: string };
+    const youItem: ResolvedItem = {
+      kind: "message",
+      id: `you-${step.id}`,
+      time: "",
+      text,
+      from: "you",
+    };
+    setResolved((r) => [...r, youItem]);
+
+    const extracted = extractNameLenient(text);
+    if (extracted) playerNameRef.current = extracted;
+    const ack = extracted
+      ? `${extracted} — right, sorry. lol, ok.`
+      : "lol nvm, ignore that — sorry";
+
+    setLiveBusy(true);
+    setTimeout(() => {
+      setResolved((r) => [
+        ...r,
+        { kind: "message", id: `mom-ack-${step.id}`, time: "", text: ack, from: "mom" },
+      ]);
+      setLiveBusy(false);
+      setStepIndex((i) => i + 1);
+    }, 900);
+  }
+
+  // The free-text replacement for the old two-button choice screen: one
+  // reply, classified server-side (with a client-side heuristic fallback if
+  // the request fails outright) into whichever ending path it leans
+  // toward — the classification always resolves to one of the two paths,
+  // never leaves the episode hanging undecided.
+  async function handleChoiceSend(text: string) {
+    const step = currentStep as { id: string };
+    const youItem: ResolvedItem = {
+      kind: "message",
+      id: `you-${step.id}`,
+      time: "",
+      text,
+      from: "you",
+    };
+    setResolved((r) => [...r, youItem]);
+
+    const transcript = [...resolved, youItem].map((item) => {
+      if (item.kind === "message") return { from: item.from, text: item.text };
+      if (item.kind === "image") {
+        return {
+          from: "mom" as const,
+          text:
+            item.content.kind === "craigslist"
+              ? "[sent a screenshot of an old Craigslist ad]"
+              : "[sent a screenshot of a Reddit thread]",
+        };
+      }
+      return { from: "mom" as const, text: "[sent a voice memo]" };
+    });
+
+    setLiveBusy(true);
+    let reply = "yeah... ok";
+    let path: Path = classifyPathHeuristic(text);
+    try {
+      const res = await fetch("/api/chat-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          beatId: "choice",
+          history: [{ role: "user", content: text }],
+          transcript,
+          playerName: playerNameRef.current,
+          askForName: false,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (typeof data?.reply === "string" && data.reply.trim()) reply = data.reply.trim();
+      if (data?.path === "aware" || data?.path === "compliant") path = data.path;
+    } catch {
+      // keep the safe fallback reply + client-side heuristic path
+    }
+
+    setResolved((r) => [
+      ...r,
+      { kind: "message", id: `mom-live-${step.id}`, time: "", text: reply, from: "mom", live: true },
+    ]);
+
+    // Stays busy (composer disabled, no second submission possible) through
+    // this pause — the reply visibly lands before the ending sequence takes
+    // over, which is the only way the episode ends past this point.
+    setTimeout(() => {
+      setLiveBusy(false);
+      handlePick(path);
+    }, 900);
+  }
+
   const liveTurns = currentStep ? liveTurnsByStep[currentStep.id] ?? 0 : 0;
 
   return (
@@ -347,7 +464,7 @@ export default function ChatEpisode() {
             currentStep?.kind === "fourth-wall") && <TypingIndicator />}
 
           {currentStep?.kind === "flicker" && flickerOn && <TypingIndicator />}
-          {currentStep?.kind === "frozen" && <TypingIndicator />}
+          {currentStep?.kind === "frozen" && <TypingIndicator frozen={frozenStopped} />}
           {liveBusy && <TypingIndicator />}
 
           {currentStep?.kind === "corrupted-attachment" && (
@@ -363,8 +480,6 @@ export default function ChatEpisode() {
             />
           )}
 
-          {currentStep?.kind === "choice" && <ChoicePrompt onPick={handlePick} />}
-
           <div ref={bottomRef} />
         </div>
       </div>
@@ -376,6 +491,12 @@ export default function ChatEpisode() {
           disabled={liveBusy}
           onSend={handleLiveSend}
         />
+      )}
+      {currentStep?.kind === "name-capture" && (
+        <LiveReplyComposer turnsUsed={0} maxTurns={1} disabled={liveBusy} onSend={handleNameCapture} />
+      )}
+      {currentStep?.kind === "choice-input" && (
+        <LiveReplyComposer turnsUsed={0} maxTurns={1} disabled={liveBusy} onSend={handleChoiceSend} />
       )}
     </>
   );

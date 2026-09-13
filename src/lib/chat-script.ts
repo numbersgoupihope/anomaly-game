@@ -22,7 +22,13 @@ export type MessageStep = { kind: "message"; id: string; time: string; text: str
 export type ImageStep = { kind: "image"; id: string; time: string; content: ImageContent };
 // A live back-and-forth with the Mom AI, scoped to one story beat.
 export type ReplyStep = { kind: "reply"; id: string; beatId: BeatId };
-export type ChoiceStep = { kind: "choice"; id: string };
+// A single free-text reply, one shot — the player's answer here is
+// classified (aware vs. compliant) instead of picking from fixed buttons.
+export type ChoiceInputStep = { kind: "choice-input"; id: string };
+// One deterministic, client-only exchange near the start that captures the
+// player's real first name — not routed through the AI at all, so it never
+// depends on the model having actually asked in a usable way.
+export type NameCaptureStep = { kind: "name-capture"; id: string };
 // The "are you still there" pause: the typing indicator starts/stops a few
 // times before this message finally lands.
 export type FlickerStep = { kind: "flicker"; id: string; time: string; text: string };
@@ -37,7 +43,8 @@ export type ScriptStep =
   | MessageStep
   | ImageStep
   | ReplyStep
-  | ChoiceStep
+  | ChoiceInputStep
+  | NameCaptureStep
   | FlickerStep
   | FrozenStep
   | CorruptedAttachmentStep
@@ -62,6 +69,13 @@ export function nameCalloutText(name: string | null): string {
 }
 
 export const INTRO_STEPS: ScriptStep[] = [
+  {
+    kind: "message",
+    id: "m0",
+    time: "9:40 PM",
+    text: "ok this is so dumb but my phone just glitched and merged your contact with someone else's, what's your name again? lol I don't trust it right now",
+  },
+  { kind: "name-capture", id: "namecapture1" },
   { kind: "message", id: "m1", time: "9:41 PM", text: "hey are you awake" },
   {
     kind: "message",
@@ -70,7 +84,10 @@ export const INTRO_STEPS: ScriptStep[] = [
     text: "don't answer if you're asleep, it's not important",
   },
   { kind: "reply", id: "r1", beatId: "opener" },
-  { kind: "message", id: "m3", time: "9:43 PM", text: "ok good" },
+  // Tenor-neutral on purpose — this follows a live AI exchange whose final
+  // note could land anywhere (relieved, confused, amused, annoyed), so it
+  // can't assume a specific "good" reaction without risking a mismatch.
+  { kind: "message", id: "m3", time: "9:43 PM", text: "ok, anyway" },
   { kind: "message", id: "m4", time: "9:43 PM", text: "this is going to sound strange" },
   {
     kind: "message",
@@ -145,7 +162,13 @@ export const INTRO_STEPS: ScriptStep[] = [
   },
   { kind: "corrupted-attachment", id: "attachment1", time: "9:57 PM" },
   { kind: "fourth-wall", id: "fourthwall1" },
-  { kind: "choice", id: "choice1" },
+  {
+    kind: "message",
+    id: "m16",
+    time: "9:58 PM",
+    text: "I don't know what to do here. do you want me to just leave it, or should we try to figure out what's going on?",
+  },
+  { kind: "choice-input", id: "choice1" },
 ];
 
 export const AWARE_STEPS: ScriptStep[] = [
@@ -153,7 +176,7 @@ export const AWARE_STEPS: ScriptStep[] = [
     kind: "message",
     id: "a1",
     time: "9:58 PM",
-    text: "yeah. you're probably right. I'm going to stop looking at this stuff, it's late.",
+    text: "yeah, ok. let's just leave it alone — it's late anyway.",
   },
   { kind: "message", id: "a2", time: "9:58 PM", text: "goodnight. love you." },
   // A long, deliberately dead pause after the goodnight — the episode is
@@ -187,17 +210,6 @@ export const COMPLIANT_STEPS: ScriptStep[] = [
     text: "what's the something of yours you never got back",
   },
   { kind: "frozen", id: "frozen1" },
-];
-
-export const CHOICE_OPTIONS: { path: Path; label: string }[] = [
-  {
-    path: "aware",
-    label: "That's really strange. We should stop looking into this.",
-  },
-  {
-    path: "compliant",
-    label: "Keep looking — I want to know what it means.",
-  },
 ];
 
 export type ResolvedItem =

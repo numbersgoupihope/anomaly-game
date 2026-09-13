@@ -6,11 +6,28 @@ wrong. You have 30 seconds to click it.
 
 No accounts, no login, no per-player tracking of any kind.
 
+## Current prototype: messaging-interface mechanic (not merged to main)
+
+`src/app/page.tsx` currently renders `<ChatEpisode />`
+(`src/components/chat/`) instead of the sentence-reading game described
+below — a one-off test episode (a simulated "Mom" text conversation) built
+on the `v4-live-ai-analog-horror` branch to prove out a different mechanic.
+It's a fixed script, not wired to daily rotation. The original mechanic
+(`src/components/Game.tsx` + its `supabase`/`/api/scene`, `/api/guess`
+routes) is untouched and unlinked, not deleted, in case it comes back.
+
+The chat prototype needs one more env var: `ANTHROPIC_API_KEY`, for the
+live Mom replies during free-text exchanges (Claude Haiku 4.5 — see
+`src/app/api/chat-reply/route.ts`). Without it, those exchanges fall back to
+a small set of static lines so the episode still plays end to end.
+
 ## Stack
 
 - Next.js 16 (App Router) + Tailwind
 - Supabase (Postgres) for scenes and daily aggregate stats
-- Web Audio API for an opt-in ambient drone and hit/miss tones — no audio files
+- Web Audio API for ambient drone, hit/miss tones, and (in the chat
+  prototype) a corrupted-voice-memo effect — no audio files
+- Anthropic API (Claude Haiku 4.5) for the chat prototype's live replies
 - Deployed on Vercel
 
 ## Data model
@@ -40,6 +57,7 @@ doesn't replay the round.
    - `SUPABASE_URL` — Project Settings → API → Project URL
    - `SUPABASE_SERVICE_ROLE_KEY` — Project Settings → API → `service_role` secret key
    - `STATUS_PASSWORD` — any password of your choosing, gates `/status`
+   - `ANTHROPIC_API_KEY` — only needed for live Mom replies in the chat prototype; safe to leave unset (falls back to static lines)
 4. `npm install`
 5. `npm run dev` and open http://localhost:3000
 
